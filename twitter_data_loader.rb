@@ -16,50 +16,67 @@ module Twitter
         twitter_response = Twitter.friends(user_handle, :cursor => cursor)
         twitter_response[:users].each do |person|
           Person.create(:screen_name => person[:screen_name], 
-                        :twitter_id  => person[:id],
-                        :processed   => false)
+                        :twitter_id  => person[:id_str])
           cursor = twitter_response[:next_cursor]
         end
       end
     end
 
     def self.load_all_tweets_and_retweets_for_friends
-      users_to_delete = []
-      Person.find(:all, :conditions => {:processed => false}).each do |person|
+      puts "API streaming has started. We are all ears to new updates!"
+      puts "*"*100
+      people_ids = Person.all.each.map(&:twitter_id).map(&:to_i)
+      TweetStream::Client.new(ENV["TWITTER_USERNAME"], ENV["TWITTER_PASSWORD"]).follow(*people_ids) do |orig_status|
+        status = orig_status.clone
+        is_retweet = false
+
         begin
-          twitter_response = Twitter.user_timeline(person.twitter_id, :include_rts => 1)
-          twitter_response.each do |status|
-            if status[:retweeted_status].present?
-              retweeter = status[:retweeted_status][:user]
-              current_tweet = Tweet.find(:first, :conditions => {:twitter_id => status[:retweeted_status][:id] }) || 
-                              Tweet.create(:text       => status[:text],
-                                           :twitter_id => status[:retweeted_status][:id])
-              retweeter = Person.find(:first, :conditions => {:twitter_id => retweeter[:id]}) || 
-                          Person.create(:screen_name => retweeter[:screen_name],
-                                        :twitter_id  => retweeter[:id])
-              retweeter.tweets << current_tweet
-              current_tweet.retweeters << person
-              person.retweets << current_tweet
-              retweeter.save
-              current_tweet.save
-              person.save
-            else
-              current_tweet = Tweet.create(:text       => status[:text],
-                                           :twitter_id => status[:id])
-              current_tweet.people << person
-              current_tweet.save
-            end
-          end
-        rescue Twitter::Unauthorized => e
-          puts "Person #{person.screen_name} does not allow public access"
-          users_to_delete << person
+          status.retweeted_status
+          is_retweet = true
+        rescue 
+          #do nothing
         end
 
-        person.processed = true
-        person.save
-      end 
-      puts "Deleting all private users"
-      users_to_delete.each {|person| person.destroy}
+        person = Person.find(:first, :conditions => {:twitter_id => status.user.id_str}) ||
+                 Person.create(:screen_name => status.user.screen_name, :twitter_id => status.user.id_str)
+        if is_retweet 
+          original_tweeter = status.retweeted_status.user
+
+          puts "*"*100
+          puts "It's a retweet! The values are:"
+          puts "Status Id: #{status.retweeted_status.id_str}"
+          puts "Status Text: #{status.retweeted_status.text}"
+          puts "Original Tweeter Screenname: #{original_tweeter.screen_name}"
+          puts "Original Tweeter id: #{original_tweeter.id_str}"
+          puts "Person screen name is #{person.screen_name}"
+          puts "Locally stored id is: #{person.twitter_id}"
+          puts "*"*100
+          
+          current_tweet = Tweet.find(:first, :conditions => {:twitter_id => status.retweeted_status.id_str }) || 
+                          Tweet.create(:text       => status.text,
+                                       :twitter_id => status.retweeted_status.id_str)
+          original_tweeter = Person.find(:first, :conditions => {:twitter_id => original_tweeter.id_str}) || 
+                             Person.create(:screen_name => original_tweeter.screen_name,
+                                           :twitter_id  => original_tweeter.id_str)
+          current_tweet.retweeters << person
+          current_tweet.owner << original_tweeter 
+          current_tweet.save!
+        else
+          puts "*"*100
+          puts "It's an original Tweet"
+          puts "Status Id: #{status.id_str}"
+          puts "Status Text: #{status.text}"
+          puts "Tweeter Id: #{status.user.id_str}"
+          puts "Person screen name is #{person.screen_name}"
+          puts "Locally stored id is: #{person.twitter_id}"
+          puts "*"*100
+
+          current_tweet = Tweet.create(:text       => status.text,
+                                       :twitter_id => status.id_str)
+          current_tweet.owner << person
+          current_tweet.save!
+        end
+      end
     end
   end
 end
