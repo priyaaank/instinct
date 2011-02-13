@@ -11,6 +11,11 @@ module Twitter
     end
 
     def self.load_friends_data_for_user(user_handle)
+      user = Twitter.user(user_handle)
+      Person.find(:first, :conditions => {:screen_name => user[:screen_name]}) ||
+      Person.create(:screen_name => user[:screen_name],
+                    :twitter_id  => user[:id_str])
+
       cursor = -1
       while cursor != 0 do
         twitter_response = Twitter.friends(user_handle, :cursor => cursor)
