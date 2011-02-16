@@ -3,15 +3,20 @@ require 'crawler_objects'
 module Twitter
   module Recommendations
     
+    def self.tweet_map_for(person)
+      person.retweets.map(&:twitter_id).each.inject({}) {|hash, tweet| hash[tweet] = 1; hash}
+    end
+
     def self.generate_master_tweet_list_for(user)
-      tweet_hash_with_empty_weight = user.retweets.each.inject({}) {|hash, tweet| hash[tweet.twitter_id] = 0; hash}
-      puts tweet_hash_with_empty_weight
-      master_graph = Person.all.each.inject({}) {|hash, person| hash[person.screen_name] = tweet_hash_with_empty_weight; hash }
-      user.retweets.each do |retweet|
-        Person.all.each do |person|
-          master_graph[person][retweet] = 1 if person.retweets.map(&:twitter_id).include?(retweet.twitter_id)
-        end
+      master_has = {}
+      user_tweet_hash_with_zero_weight = user.retweets.map(&:twitter_id).each.inject({}) {|hash, tweet| hash[tweet] = 0; hash}
+
+      master_hash = Person.all.each.inject({}) do |hash, person|
+        hash[person.screen_name] = user_tweet_hash_with_zero_weight.merge!(tweet_map_for(person))
+        hash
       end
+      puts master_hash.to_json
+      master_hash
     end
 
     def self.get_cached_master_tweet_list_for(user)
@@ -60,9 +65,27 @@ module Twitter
         user_similarity_score[person] = calculate_similarity_between(user, person)
       end
 
+      tweets_user_has_not_retweeted.each do |tweet|
+        similarity_sum = 0
+        total_similarity_score = 0
 
+        user_similarity_score.each do |critic, score|
+          if critic.retweets.include?(tweet)
+            similarity_sum += score
+            total_similarity_score += (score * @tweet_master_set[critic][tweet])
+          end
+       
+         similarity_sum[tweet] = (total_similarity_score/similarity_sum) unless similarity_sum == 0 
+        end
+      end
     end
+
   end
 end
 
-Twitter::Recommendations.calculate_similarity_between(nil, Person.find(:first, :conditions => {:screen_name => "priyaaank"}), nil)
+result = Twitter::Recommendations.get_cached_master_tweet_list_for(Person.find(:first, :conditions => {:screen_name => "just3ws"}))
+
+puts result["just3ws"].to_json
+puts result["priyaaank"].to_json
+puts result["markhneedham"].to_json
+
